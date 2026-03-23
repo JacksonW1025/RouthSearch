@@ -1,10 +1,31 @@
 # RouthSearch
+[中文说明 / Chinese README](README.zh-CN.md)
+
 ## Description
 RouthSearch, a tool to determine the valid three-dimensional PID parameter ranges of UAVs under different flight modes. This tool comprised of two modules: Boundary Identification Module and Misbehavior validation Module.
 
 The boundary identification module first takes in PID parameters and their corresponding values range from the official documents of UAVs. It then efficiently searches the PID parameter space to find a classification boundary between valid and invalid configurations. The implementation of boundary identification module is available at `evaluation_script/`.
 
 During the search, the boundary identification module continuously queries the misbehavior validation module to determine whether a given PID parameter configuration is valid. The implementation of misbehavior validation module is available at `routh_search/`.
+
+## Purpose And Paper Relation
+This repository is the artifact for the paper **RouthSearch: Inferring PID Parameter Specification for Flight Control Program by Coordinate Search**.
+
+The goal of RouthSearch is not to find a single "best" PID tuple. Instead, it infers a **valid three-dimensional PID boundary** for a given flight mode, so dangerous PID configurations can be filtered before they cause unstable behavior such as oscillation, path deviation, loss of control, or crash.
+
+At a high level, the paper combines three ideas:
+
+1. Use the Routh-Hurwitz criterion to derive a theoretical PID boundary.
+2. Use coordinate search to refine that boundary against the real autopilot and simulator behavior.
+3. Use flight-task-specific oracles to decide whether a tested PID configuration is valid or invalid.
+
+In this repository, the mapping from the paper to the code is:
+
+* `evaluation_script/`: boundary identification and fuzzing scripts used to search the PID space.
+* `routh_search/`: mission drivers and oracle implementations used to validate each tested PID configuration.
+* `ardupilot_default_data/`: default parameter data used by the experiments.
+
+For a detailed paper walkthrough, see `RouthSearch_完整中文翻译与细致解析.md`.
 ## Environment
 1. Languages: 
    * Python(Python 3.10)
@@ -49,6 +70,81 @@ The project is structured as follows:
 * **`evaluation_script/`**: Contains shell scripts used for evaluation.
 
 * **`routh_search/`**:  This directory contains the code executing specific UAV flight task and the "oracle" used to determine the success or failure of a given flight task.  
+
+## How To Use This Repository
+There are two practical ways to use this repository.
+
+### 1. Run The Native Mission And Oracle Scripts
+This is the best entry point if you want to understand the repository, smoke-test the environment, or manually validate one PID configuration.
+
+Typical workflow:
+
+1. Start the corresponding simulator and autopilot.
+2. Run one mission script under `routh_search/`.
+3. Run the matching oracle on the generated flight log.
+
+Examples:
+
+```bash
+python3 -m compileall routh_search
+
+# ArduPilot example
+python3 routh_search/ardupilot/start_ardupilot.py
+python3 routh_search/ardupilot/rtl_mode.py <config.json>
+python3 routh_search/ardupilot/rtl_mode_oracle.py <path-to-bin-log>
+
+# PX4 example
+# Start PX4 SITL separately, for example with jMAVSim in your PX4 checkout.
+python3 routh_search/px4/px4_hold_mode.py
+python3 routh_search/px4/px4_hold_mode_oracle.py <path-to-ulg-log>
+```
+
+The mission/oracle pairs in this repository are:
+
+* ArduPilot: `brake_mode.py`, `circle_mode.py`, `rtl_mode.py`, `zigzag_mode.py`
+* ArduPilot oracles: `*_mode_oracle.py` under `routh_search/ardupilot/`
+* PX4: `px4_hold_mode.py`, `px4_land_mode.py`, `px4_orbit_mode.py`, `px4_rtl_mode.py`
+* PX4 oracles: `*_oracle.py` under `routh_search/px4/`
+
+Important runtime assumptions:
+
+* The scripts communicate with the autopilot through MAVLink on `udp:127.0.0.1:14550`.
+* ArduPilot scripts expect `ARDUPILOT_HOME` and `ARDUPILOT_FUZZ_HOME` to be set.
+* PX4 scripts assume a running PX4 SITL instance and access to the generated `.ulg` logs.
+
+### 2. Run The Full Boundary Search Scripts
+This is the experiment layer used in the paper.
+
+Each flight mode has two Bash entrypoints under `evaluation_script/`:
+
+* `*_identify_bounder.sh`: identifies the valid/invalid PID boundary.
+* `*_fuzz.sh`: continues exploring the space to find more invalid PID configurations.
+
+Examples:
+
+```bash
+bash evaluation_script/rtl_routh/rtl_routh_identify_bounder.sh
+bash evaluation_script/rtl_routh/rtl_routh_fuzz.sh
+bash evaluation_script/hold_roll_roth/px4_hold_roll_routh_identify_bounder.sh
+```
+
+These scripts repeatedly:
+
+1. Generate a PID configuration to test.
+2. Launch a mission runner.
+3. Execute the corresponding oracle on the produced log.
+4. Update the inferred boundary from the observed valid/invalid result.
+
+## Current Repository State
+This repository is best understood as a research artifact rather than a polished product. The native Python mission/oracle scripts are directly usable once the simulator environments are prepared, but the full evaluation layer still assumes the original experiment setup.
+
+In particular, the scripts under `evaluation_script/` currently reference:
+
+* hard-coded paths such as `/home/li/UAVFuzzing` and `/home/li/pgfuzz/...`
+* Docker images such as `rtl_mode:latest`, `rtl_oracle:latest`, `px4_hold_mode`, and related oracle images
+* helper files such as `generate_abnormal_config.py` and `default.json`
+
+Some of these referenced artifacts are not versioned in this repository. As a result, the `routh_search/` scripts are the most reliable starting point for understanding and validating the system, while reproducing the full RQ1-RQ7 evaluation requires adapting the experiment scripts to your local environment and supplying the missing Docker/helper artifacts.
 
 ## Evaluation Result
 ### RQ1
